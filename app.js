@@ -10,9 +10,10 @@ app.use(express.json());
 
 const INTEGRATION_KEY = process.env.INTEGRATION_KEY;
 const USER_ID = process.env.USER_ID;
+
 const PRIVATE_KEY = fs.readFileSync("private.key");
 
-// JWT + Account automatisch holen
+// 🔐 DocuSign Auth
 async function getDocuSignAuth() {
   const now = Math.floor(Date.now() / 1000);
 
@@ -59,6 +60,7 @@ async function getDocuSignAuth() {
   };
 }
 
+// 🔒 HTML Escape
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -67,132 +69,76 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
-// Startseite mit Formular
+// 🏠 Startseite
 app.get("/", (req, res) => {
-  res.set("Cache-Control", "no-store");
   res.send(`
-    <!DOCTYPE html>
-    <html lang="de">
-    <head>
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>Unterschrift starten</title>
-      <style>
-        body {
-          font-family: Arial, sans-serif;
-          background: #f7f7f7;
-          margin: 0;
-          padding: 0;
-        }
-        .wrap {
-          max-width: 520px;
-          margin: 40px auto;
-          background: white;
-          padding: 28px;
-          border-radius: 12px;
-          box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-        }
-        h1 {
-          margin-top: 0;
-          font-size: 28px;
-        }
-        label {
-          display: block;
-          margin-top: 18px;
-          margin-bottom: 8px;
-          font-weight: bold;
-        }
-        input {
-          width: 100%;
-          padding: 14px;
-          font-size: 18px;
-          box-sizing: border-box;
-          border: 1px solid #ccc;
-          border-radius: 8px;
-        }
-        button {
-          margin-top: 24px;
-          width: 100%;
-          padding: 16px;
-          font-size: 20px;
-          border: none;
-          border-radius: 10px;
-          background: #4f46e5;
-          color: white;
-          cursor: pointer;
-        }
-        p.note {
-          margin-top: 16px;
-          font-size: 14px;
-          color: #555;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="wrap">
-        <h1>Bitte Daten eingeben</h1>
-        <form method="POST" action="/start-signing" autocomplete="off">
-          <label for="customerName">Name</label>
-          <input id="customerName" name="customerName" type="text" required />
+    <html>
+      <body style="font-family:Arial; background:#f5f5f5;">
+        <div style="max-width:500px;margin:40px auto;background:white;padding:30px;border-radius:12px;">
+          
+          <h2>Bitte Daten eingeben</h2>
 
-          <label for="customerEmail">E-Mail-Adresse</label>
-          <input id="customerEmail" name="customerEmail" type="email" required />
+          <form method="POST" action="/start-signing">
+            <label>Name</label><br>
+            <input name="customerName" style="width:100%;padding:10px;margin-top:5px;" required><br><br>
 
-          <button type="submit">Zur Unterschrift</button>
-        </form>
-        <p class="note">
-          Der Kunde gibt hier seinen Namen und seine E-Mail ein und wird danach direkt zur Unterschrift weitergeleitet.
-        </p>
-      </div>
-    </body>
+            <label>E-Mail</label><br>
+            <input name="customerEmail" type="email" style="width:100%;padding:10px;margin-top:5px;" required><br><br>
+
+            <button style="width:100%;padding:15px;background:black;color:white;border:none;border-radius:8px;">
+              Zur Unterschrift
+            </button>
+          </form>
+
+        </div>
+      </body>
     </html>
   `);
 });
 
-// Signing starten
+// ✍️ Signing starten
 app.post("/start-signing", async (req, res) => {
   try {
-    const customerName = (req.body.customerName || "").trim();
-    const customerEmail = (req.body.customerEmail || "").trim();
-
-    if (!customerName || !customerEmail) {
-      return res.status(400).send("Name und E-Mail sind erforderlich.");
-    }
+    const name = req.body.customerName;
+    const email = req.body.customerEmail;
 
     const { accessToken, accountId, baseUri } = await getDocuSignAuth();
 
-    // Einfaches Testdokument
+    // 📄 Dokument mit Logo
     const documentHtml = `
       <html>
-        <body style="font-family: Arial, sans-serif; padding: 40px;">
-          <h1>Bitte hier unterschreiben</h1>
-          <p>Name: ${escapeHtml(customerName)}</p>
-          <p>E-Mail: ${escapeHtml(customerEmail)}</p>
-          <p style="margin-top: 40px;">/sn1/</p>
+        <body style="font-family: Arial; background:#f5f5f5; padding:40px;">
+          
+          <div style="max-width:600px; margin:auto; background:white; padding:40px; border-radius:12px;">
+
+            <div style="text-align:center; margin-bottom:30px;">
+              <img src="https://i.imgur.com/jqPSi9m.jpeg" style="width:250px;" />
+            </div>
+
+            <h2 style="text-align:center;">Einverständniserklärung</h2>
+
+            <p style="text-align:center;">
+              Hiermit bestätige ich die Durchführung der Behandlung.
+            </p>
+
+            <p><strong>Name:</strong> ${escapeHtml(name)}</p>
+            <p><strong>E-Mail:</strong> ${escapeHtml(email)}</p>
+
+            <p style="margin-top:50px;"><strong>Unterschrift:</strong></p>
+
+            <div style="margin-top:30px; text-align:center;">
+              /sn1/
+            </div>
+
+          </div>
+
         </body>
       </html>
     `;
 
     const documentBase64 = Buffer.from(documentHtml).toString("base64");
 
-    // Name/E-Mail/clientUserId müssen für den Recipient View mit dem Empfänger im Envelope übereinstimmen. :contentReference[oaicite:1]{index=1}
-    const signer = {
-      email: customerEmail,
-      name: customerName,
-      recipientId: "1",
-      clientUserId: "1234",
-      tabs: {
-        signHereTabs: [
-          {
-            anchorString: "/sn1/",
-            anchorYOffset: "0",
-            anchorUnits: "pixels",
-            anchorXOffset: "0"
-          }
-        ]
-      }
-    };
-
+    // Envelope erstellen
     const envelopeRes = await axios.post(
       `${baseUri}/restapi/v2.1/accounts/${accountId}/envelopes`,
       {
@@ -206,7 +152,24 @@ app.post("/start-signing", async (req, res) => {
           }
         ],
         recipients: {
-          signers: [signer]
+          signers: [
+            {
+              email,
+              name,
+              recipientId: "1",
+              clientUserId: "1234",
+              tabs: {
+                signHereTabs: [
+                  {
+                    anchorString: "/sn1/",
+                    anchorYOffset: "0",
+                    anchorUnits: "pixels",
+                    anchorXOffset: "0"
+                  }
+                ]
+              }
+            }
+          ]
         },
         status: "sent"
       },
@@ -219,13 +182,14 @@ app.post("/start-signing", async (req, res) => {
 
     const envelopeId = envelopeRes.data.envelopeId;
 
+    // Signing URL
     const viewRes = await axios.post(
       `${baseUri}/restapi/v2.1/accounts/${accountId}/envelopes/${envelopeId}/views/recipient`,
       {
         returnUrl: "https://express-hello-world-43k4.onrender.com/done",
         authenticationMethod: "none",
-        email: customerEmail,
-        userName: customerName,
+        email,
+        userName: name,
         clientUserId: "1234"
       },
       {
@@ -235,58 +199,23 @@ app.post("/start-signing", async (req, res) => {
       }
     );
 
-    return res.redirect(viewRes.data.url);
+    res.redirect(viewRes.data.url);
+
   } catch (e) {
-    console.error("DOCUSIGN ERROR:");
-    console.error(e.response?.data || e.message);
-    return res.status(500).send("Fehler bei DocuSign");
+    console.error("DOCUSIGN ERROR:", e.response?.data || e.message);
+    res.send("Fehler bei DocuSign");
   }
 });
 
+// ✅ Nach Unterschrift
 app.get("/done", (req, res) => {
-  res.set("Cache-Control", "no-store");
   res.send(`
-    <!DOCTYPE html>
-    <html lang="de">
-    <head>
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>Fertig</title>
-      <style>
-        body {
-          font-family: Arial, sans-serif;
-          background: #f7f7f7;
-          margin: 0;
-          padding: 0;
-        }
-        .wrap {
-          max-width: 520px;
-          margin: 40px auto;
-          background: white;
-          padding: 28px;
-          border-radius: 12px;
-          box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-          text-align: center;
-        }
-        a {
-          display: inline-block;
-          margin-top: 24px;
-          padding: 14px 20px;
-          background: #4f46e5;
-          color: white;
-          text-decoration: none;
-          border-radius: 10px;
-          font-size: 18px;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="wrap">
-        <h1>Vielen Dank</h1>
-        <p>Die Unterschrift wurde abgeschlossen.</p>
-        <a href="/">Zur Startseite</a>
-      </div>
-    </body>
+    <html>
+      <body style="font-family:Arial; text-align:center; padding:50px;">
+        <h2>Vielen Dank!</h2>
+        <p>Unterschrift erfolgreich abgeschlossen.</p>
+        <a href="/">Neue Unterschrift</a>
+      </body>
     </html>
   `);
 });
