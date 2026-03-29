@@ -13,7 +13,7 @@ const USER_ID = process.env.USER_ID;
 
 const PRIVATE_KEY = fs.readFileSync("private.key");
 
-// 🔐 DocuSign Auth
+// DocuSign Auth
 async function getDocuSignAuth() {
   const now = Math.floor(Date.now() / 1000);
 
@@ -60,7 +60,7 @@ async function getDocuSignAuth() {
   };
 }
 
-// 🔒 HTML Escape
+// HTML Escape
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -69,14 +69,14 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
-// 🏠 Startseite
+// Startseite
 app.get("/", (req, res) => {
   res.send(`
     <html>
       <body style="font-family:Arial; background:#f5f5f5;">
         <div style="max-width:500px;margin:40px auto;background:white;padding:30px;border-radius:12px;">
           
-          <h2>Bitte Daten eingeben</h2>
+          <h2>Auftrag starten</h2>
 
           <form method="POST" action="/start-signing">
             <label>Name</label><br>
@@ -96,7 +96,7 @@ app.get("/", (req, res) => {
   `);
 });
 
-// ✍️ Signing starten
+// Signing starten
 app.post("/start-signing", async (req, res) => {
   try {
     const name = req.body.customerName;
@@ -104,7 +104,6 @@ app.post("/start-signing", async (req, res) => {
 
     const { accessToken, accountId, baseUri } = await getDocuSignAuth();
 
-    // 📄 Dokument mit Logo
     const documentHtml = `
       <html>
         <body style="font-family: Arial; background:#f5f5f5; padding:40px;">
@@ -118,7 +117,7 @@ app.post("/start-signing", async (req, res) => {
             <h2 style="text-align:center;">Einverständniserklärung</h2>
 
             <p style="text-align:center;">
-              Hiermit bestätige ich die Durchführung der Behandlung.
+              Hiermit bestätige ich den Auftrag sowie die Durchführung der vereinbarten Arbeiten an meinem Fahrzeug.
             </p>
 
             <p><strong>Name:</strong> ${escapeHtml(name)}</p>
@@ -138,7 +137,6 @@ app.post("/start-signing", async (req, res) => {
 
     const documentBase64 = Buffer.from(documentHtml).toString("base64");
 
-    // Envelope erstellen
     const envelopeRes = await axios.post(
       `${baseUri}/restapi/v2.1/accounts/${accountId}/envelopes`,
       {
@@ -169,6 +167,13 @@ app.post("/start-signing", async (req, res) => {
                 ]
               }
             }
+          ],
+          carbonCopies: [
+            {
+              email: "info@amz-dreilaendereck.de",
+              name: "AMZ Dreilaendereck",
+              recipientId: "2"
+            }
           ]
         },
         status: "sent"
@@ -182,7 +187,6 @@ app.post("/start-signing", async (req, res) => {
 
     const envelopeId = envelopeRes.data.envelopeId;
 
-    // Signing URL
     const viewRes = await axios.post(
       `${baseUri}/restapi/v2.1/accounts/${accountId}/envelopes/${envelopeId}/views/recipient`,
       {
@@ -200,21 +204,19 @@ app.post("/start-signing", async (req, res) => {
     );
 
     res.redirect(viewRes.data.url);
-
   } catch (e) {
     console.error("DOCUSIGN ERROR:", e.response?.data || e.message);
     res.send("Fehler bei DocuSign");
   }
 });
 
-// ✅ Nach Unterschrift
 app.get("/done", (req, res) => {
   res.send(`
     <html>
       <body style="font-family:Arial; text-align:center; padding:50px;">
         <h2>Vielen Dank!</h2>
-        <p>Unterschrift erfolgreich abgeschlossen.</p>
-        <a href="/">Neue Unterschrift</a>
+        <p>Der Auftrag wurde erfolgreich bestätigt.</p>
+        <a href="/">Neuer Auftrag</a>
       </body>
     </html>
   `);
