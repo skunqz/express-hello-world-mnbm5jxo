@@ -1,61 +1,119 @@
 const express = require("express");
+const axios = require("axios");
+const fs = require("fs");
+
 const app = express();
-const port = process.env.PORT || 3001;
 
-app.get("/", (req, res) => res.type('html').send(html));
+// 👉 HIER DEINE DATEN EINTRAGEN
+const INTEGRATION_KEY = process.env.INTEGRATION_KEY;
+const USER_ID = process.env.USER_ID;
+const ACCOUNT_ID = process.env.ACCOUNT_ID;
 
-const server = app.listen(port, () => console.log(`Example app listening on port ${port}!`));
+const PRIVATE_KEY = fs.readFileSync("private.key"); // RSA Key
 
-server.keepAliveTimeout = 120 * 1000;
-server.headersTimeout = 120 * 1000;
+// 👉 TOKEN HOLEN (JWT)
+async function getAccessToken() {
+  const jwt = require("jsonwebtoken");
 
-const html = `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Hello from Render!</title>
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.5.1/dist/confetti.browser.min.js"></script>
-    <script>
-      setTimeout(() => {
-        confetti({
-          particleCount: 100,
-          spread: 70,
-          origin: { y: 0.6 },
-          disableForReducedMotion: true
-        });
-      }, 500);
-    </script>
-    <style>
-      @import url("https://p.typekit.net/p.css?s=1&k=vnd5zic&ht=tk&f=39475.39476.39477.39478.39479.39480.39481.39482&a=18673890&app=typekit&e=css");
-      @font-face {
-        font-family: "neo-sans";
-        src: url("https://use.typekit.net/af/00ac0a/00000000000000003b9b2033/27/l?primer=7cdcb44be4a7db8877ffa5c0007b8dd865b3bbc383831fe2ea177f62257a9191&fvd=n7&v=3") format("woff2"), url("https://use.typekit.net/af/00ac0a/00000000000000003b9b2033/27/d?primer=7cdcb44be4a7db8877ffa5c0007b8dd865b3bbc383831fe2ea177f62257a9191&fvd=n7&v=3") format("woff"), url("https://use.typekit.net/af/00ac0a/00000000000000003b9b2033/27/a?primer=7cdcb44be4a7db8877ffa5c0007b8dd865b3bbc383831fe2ea177f62257a9191&fvd=n7&v=3") format("opentype");
-        font-style: normal;
-        font-weight: 700;
+  const now = Math.floor(Date.now() / 1000);
+
+  const payload = {
+    iss: INTEGRATION_KEY,
+    sub: USER_ID,
+    aud: "account-d.docusign.com",
+    iat: now,
+    exp: now + 3600,
+    scope: "signature impersonation"
+  };
+
+  const token = jwt.sign(payload, PRIVATE_KEY, { algorithm: "RS256" });
+
+  const res = await axios.post(
+    "https://account-d.docusign.com/oauth/token",
+    `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${token}`,
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
       }
-      html {
-        font-family: neo-sans;
-        font-weight: 700;
-        font-size: calc(62rem / 16);
+    }
+  );
+
+  return res.data.access_token;
+}
+
+// 👉 START ROUTE
+app.get("/", async (req, res) => {
+  try {
+    const accessToken = await getAccessToken();
+
+    // 👉 kleines Test-PDF (wichtig!)
+    const pdfBase64 = Buffer.from(`
+      <html>
+        <body>
+          <h1>Bitte hier unterschreiben</h1>
+          <p>/sn1/</p>
+        </body>
+      </html>
+    `).toString("base64");
+
+    // 1. Envelope erstellen
+    const envelopeRes = await axios.post(
+      `https://demo.docusign.net/restapi/v2.1/accounts/${ACCOUNT_ID}/envelopes`,
+      {
+        emailSubject: "Bitte unterschreiben",
+        documents: [
+          {
+            documentBase64: pdfBase64,
+            name: "Dokument",
+            fileExtension: "html",
+            documentId: "1"
+          }
+        ],
+        recipients: {
+          signers: [
+            {
+              email: "test@test.com",
+              name: "Kiosk User",
+              recipientId: "1",
+              clientUserId: "1234"
+            }
+          ]
+        },
+        status: "sent"
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
       }
-      body {
-        background: white;
+    );
+
+    const envelopeId = envelopeRes.data.envelopeId;
+
+    // 2. Signing URL holen
+    const viewRes = await axios.post(
+      `https://demo.docusign.net/restapi/v2.1/accounts/${ACCOUNT_ID}/envelopes/${envelopeId}/views/recipient`,
+      {
+        returnUrl: "https://deine-render-app.onrender.com",
+        authenticationMethod: "none",
+        email: "test@test.com",
+        userName: "Kiosk User",
+        clientUserId: "1234"
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
       }
-      section {
-        border-radius: 1em;
-        padding: 1em;
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        margin-right: -50%;
-        transform: translate(-50%, -50%);
-      }
-    </style>
-  </head>
-  <body>
-    <section>
-      Hello from Render!
-    </section>
-  </body>
-</html>
-`
+    );
+
+    // 3. Weiterleitung = Kiosk
+    res.redirect(viewRes.data.url);
+
+  } catch (e) {
+    console.error(e.response?.data || e.message);
+    res.send("Fehler bei DocuSign");
+  }
+});
+
+app.listen(3000, () => console.log("läuft"));
