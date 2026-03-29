@@ -2,18 +2,32 @@ const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
 const jwt = require("jsonwebtoken");
+const nodemailer = require("nodemailer");
 
 const app = express();
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// 🔑 DocuSign
 const INTEGRATION_KEY = process.env.INTEGRATION_KEY;
 const USER_ID = process.env.USER_ID;
-
 const PRIVATE_KEY = fs.readFileSync("private.key");
 
-// DocuSign Auth
+// 📧 Gmail Daten
+const EMAIL_USER = "alwin8952@gmail.com";
+const EMAIL_PASS = "bakcxfizejdtbwqm";
+
+// 📧 Mail Setup
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: EMAIL_USER,
+    pass: EMAIL_PASS
+  }
+});
+
+// 🔐 DocuSign Auth
 async function getDocuSignAuth() {
   const now = Math.floor(Date.now() / 1000);
 
@@ -32,9 +46,7 @@ async function getDocuSignAuth() {
     "https://account-d.docusign.com/oauth/token",
     `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${token}`,
     {
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded"
-      }
+      headers: { "Content-Type": "application/x-www-form-urlencoded" }
     }
   );
 
@@ -43,14 +55,12 @@ async function getDocuSignAuth() {
   const userInfoRes = await axios.get(
     "https://account-d.docusign.com/oauth/userinfo",
     {
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      }
+      headers: { Authorization: `Bearer ${accessToken}` }
     }
   );
 
   const account =
-    userInfoRes.data.accounts.find((a) => a.is_default) ||
+    userInfoRes.data.accounts.find(a => a.is_default) ||
     userInfoRes.data.accounts[0];
 
   return {
@@ -60,16 +70,7 @@ async function getDocuSignAuth() {
   };
 }
 
-// HTML Escape
-function escapeHtml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-// Startseite
+// 🏠 Startseite
 app.get("/", (req, res) => {
   res.send(`
     <html>
@@ -80,14 +81,12 @@ app.get("/", (req, res) => {
 
           <form method="POST" action="/start-signing">
             <label>Name</label><br>
-            <input name="customerName" style="width:100%;padding:10px;margin-top:5px;" required><br><br>
+            <input name="customerName" required><br><br>
 
             <label>E-Mail</label><br>
-            <input name="customerEmail" type="email" style="width:100%;padding:10px;margin-top:5px;" required><br><br>
+            <input name="customerEmail" required><br><br>
 
-            <button style="width:100%;padding:15px;background:black;color:white;border:none;border-radius:8px;">
-              Zur Unterschrift
-            </button>
+            <button>Zur Unterschrift</button>
           </form>
 
         </div>
@@ -96,7 +95,7 @@ app.get("/", (req, res) => {
   `);
 });
 
-// Signing starten
+// ✍️ Signing starten
 app.post("/start-signing", async (req, res) => {
   try {
     const name = req.body.customerName;
@@ -106,44 +105,24 @@ app.post("/start-signing", async (req, res) => {
 
     const documentHtml = `
       <html>
-        <body style="font-family: Arial; background:#f5f5f5; padding:40px;">
-          
-          <div style="max-width:600px; margin:auto; background:white; padding:40px; border-radius:12px;">
-
-            <div style="text-align:center; margin-bottom:30px;">
-              <img src="https://i.imgur.com/jqPSi9m.jpeg" style="width:250px;" />
-            </div>
-
-            <h2 style="text-align:center;">Einverständniserklärung</h2>
-
-            <p style="text-align:center;">
-              Hiermit bestätige ich den Auftrag sowie die Durchführung der vereinbarten Arbeiten an meinem Fahrzeug.
-            </p>
-
-            <p><strong>Name:</strong> ${escapeHtml(name)}</p>
-            <p><strong>E-Mail:</strong> ${escapeHtml(email)}</p>
-
-            <p style="margin-top:50px;"><strong>Unterschrift:</strong></p>
-
-            <div style="margin-top:30px; text-align:center;">
-              /sn1/
-            </div>
-
-          </div>
-
+        <body style="font-family:Arial;padding:40px;">
+          <img src="https://i.imgur.com/jqPSi9m.jpeg" style="width:250px;">
+          <h2>Einverständniserklärung</h2>
+          <p>Hiermit bestätige ich den Auftrag sowie die Durchführung der vereinbarten Arbeiten.</p>
+          <p>Name: ${name}</p>
+          <p>Email: ${email}</p>
+          <p>/sn1/</p>
         </body>
       </html>
     `;
 
-    const documentBase64 = Buffer.from(documentHtml).toString("base64");
-
     const envelopeRes = await axios.post(
       `${baseUri}/restapi/v2.1/accounts/${accountId}/envelopes`,
       {
-        emailSubject: "Bitte unterschreiben",
+        emailSubject: "Signatur",
         documents: [
           {
-            documentBase64,
+            documentBase64: Buffer.from(documentHtml).toString("base64"),
             name: "Dokument",
             fileExtension: "html",
             documentId: "1"
@@ -152,8 +131,8 @@ app.post("/start-signing", async (req, res) => {
         recipients: {
           signers: [
             {
-              email,
-              name,
+              email: "test@test.com",
+              name: "Kiosk",
               recipientId: "1",
               clientUserId: "1234",
               tabs: {
@@ -167,22 +146,11 @@ app.post("/start-signing", async (req, res) => {
                 ]
               }
             }
-          ],
-          carbonCopies: [
-            {
-              email: "info@amz-dreilaendereck.de",
-              name: "AMZ Dreilaendereck",
-              recipientId: "2"
-            }
           ]
         },
         status: "sent"
       },
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`
-        }
-      }
+      { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
     const envelopeId = envelopeRes.data.envelopeId;
@@ -190,36 +158,62 @@ app.post("/start-signing", async (req, res) => {
     const viewRes = await axios.post(
       `${baseUri}/restapi/v2.1/accounts/${accountId}/envelopes/${envelopeId}/views/recipient`,
       {
-        returnUrl: "https://express-hello-world-43k4.onrender.com/done",
+        returnUrl: `https://express-hello-world-43k4.onrender.com/done?envelopeId=${envelopeId}&name=${encodeURIComponent(name)}`,
         authenticationMethod: "none",
-        email,
-        userName: name,
+        email: "test@test.com",
+        userName: "Kiosk",
         clientUserId: "1234"
       },
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`
-        }
-      }
+      { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
     res.redirect(viewRes.data.url);
+
   } catch (e) {
-    console.error("DOCUSIGN ERROR:", e.response?.data || e.message);
+    console.error(e.response?.data || e.message);
     res.send("Fehler bei DocuSign");
   }
 });
 
-app.get("/done", (req, res) => {
-  res.send(`
-    <html>
-      <body style="font-family:Arial; text-align:center; padding:50px;">
-        <h2>Vielen Dank!</h2>
-        <p>Der Auftrag wurde erfolgreich bestätigt.</p>
-        <a href="/">Neuer Auftrag</a>
-      </body>
-    </html>
-  `);
+// 📩 PDF holen + Mail senden
+app.get("/done", async (req, res) => {
+  try {
+    const envelopeId = req.query.envelopeId;
+    const name = req.query.name;
+
+    const { accessToken, accountId, baseUri } = await getDocuSignAuth();
+
+    const pdfRes = await axios.get(
+      `${baseUri}/restapi/v2.1/accounts/${accountId}/envelopes/${envelopeId}/documents/combined`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        responseType: "arraybuffer"
+      }
+    );
+
+    await transporter.sendMail({
+      from: EMAIL_USER,
+      to: "info@amz-dreilaendereck.de",
+      subject: `Neuer Auftrag unterschrieben – ${name}`,
+      text: "Im Anhang befindet sich das unterschriebene Dokument.",
+      attachments: [
+        {
+          filename: "auftrag.pdf",
+          content: pdfRes.data
+        }
+      ]
+    });
+
+    res.send(`
+      <h2>Fertig</h2>
+      <p>Dokument wurde erfolgreich per Mail gesendet.</p>
+      <a href="/">Neuer Auftrag</a>
+    `);
+
+  } catch (e) {
+    console.error(e.response?.data || e.message);
+    res.send("Fehler beim Mailversand");
+  }
 });
 
 const PORT = process.env.PORT || 3000;
