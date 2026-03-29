@@ -1,20 +1,18 @@
 const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
+const jwt = require("jsonwebtoken");
 
 const app = express();
 
-// 👉 HIER DEINE DATEN EINTRAGEN
 const INTEGRATION_KEY = process.env.INTEGRATION_KEY;
 const USER_ID = process.env.USER_ID;
 const ACCOUNT_ID = process.env.ACCOUNT_ID;
 
-const PRIVATE_KEY = fs.readFileSync("private.key"); // RSA Key
+const PRIVATE_KEY = fs.readFileSync("private.key");
 
-// 👉 TOKEN HOLEN (JWT)
+// TOKEN HOLEN (JWT)
 async function getAccessToken() {
-  const jwt = require("jsonwebtoken");
-
   const now = Math.floor(Date.now() / 1000);
 
   const payload = {
@@ -41,12 +39,10 @@ async function getAccessToken() {
   return res.data.access_token;
 }
 
-// 👉 START ROUTE
 app.get("/", async (req, res) => {
   try {
     const accessToken = await getAccessToken();
 
-    // 👉 kleines Test-PDF (wichtig!)
     const pdfBase64 = Buffer.from(`
       <html>
         <body>
@@ -56,7 +52,6 @@ app.get("/", async (req, res) => {
       </html>
     `).toString("base64");
 
-    // 1. Envelope erstellen
     const envelopeRes = await axios.post(
       `https://demo.docusign.net/restapi/v2.1/accounts/${ACCOUNT_ID}/envelopes`,
       {
@@ -75,7 +70,17 @@ app.get("/", async (req, res) => {
               email: "test@test.com",
               name: "Kiosk User",
               recipientId: "1",
-              clientUserId: "1234"
+              clientUserId: "1234",
+              tabs: {
+                signHereTabs: [
+                  {
+                    anchorString: "/sn1/",
+                    anchorYOffset: "0",
+                    anchorUnits: "pixels",
+                    anchorXOffset: "0"
+                  }
+                ]
+              }
             }
           ]
         },
@@ -90,11 +95,10 @@ app.get("/", async (req, res) => {
 
     const envelopeId = envelopeRes.data.envelopeId;
 
-    // 2. Signing URL holen
     const viewRes = await axios.post(
       `https://demo.docusign.net/restapi/v2.1/accounts/${ACCOUNT_ID}/envelopes/${envelopeId}/views/recipient`,
       {
-        returnUrl: "https://deine-render-app.onrender.com",
+        returnUrl: "https://express-hello-world-43k4.onrender.com/done",
         authenticationMethod: "none",
         email: "test@test.com",
         userName: "Kiosk User",
@@ -107,13 +111,16 @@ app.get("/", async (req, res) => {
       }
     );
 
-    // 3. Weiterleitung = Kiosk
     res.redirect(viewRes.data.url);
-
   } catch (e) {
     console.error(e.response?.data || e.message);
     res.send("Fehler bei DocuSign");
   }
 });
 
-app.listen(3000, () => console.log("läuft"));
+app.get("/done", (req, res) => {
+  res.send("Unterschrift abgeschlossen.");
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("läuft"));
