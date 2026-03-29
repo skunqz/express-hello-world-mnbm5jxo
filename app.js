@@ -5,14 +5,15 @@ const jwt = require("jsonwebtoken");
 
 const app = express();
 
+// 👉 ENV Variablen
 const INTEGRATION_KEY = process.env.INTEGRATION_KEY;
 const USER_ID = process.env.USER_ID;
-const ACCOUNT_ID = process.env.ACCOUNT_ID;
 
+// 👉 RSA Key laden
 const PRIVATE_KEY = fs.readFileSync("private.key");
 
-// TOKEN HOLEN (JWT)
-async function getAccessToken() {
+// 🔐 JWT + Account automatisch holen
+async function getDocuSignAuth() {
   const now = Math.floor(Date.now() / 1000);
 
   const payload = {
@@ -26,7 +27,8 @@ async function getAccessToken() {
 
   const token = jwt.sign(payload, PRIVATE_KEY, { algorithm: "RS256" });
 
-  const res = await axios.post(
+  // 👉 Access Token holen
+  const tokenRes = await axios.post(
     "https://account-d.docusign.com/oauth/token",
     `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${token}`,
     {
@@ -36,13 +38,35 @@ async function getAccessToken() {
     }
   );
 
-  return res.data.access_token;
+  const accessToken = tokenRes.data.access_token;
+
+  // 👉 richtigen Account + Base URL holen
+  const userInfoRes = await axios.get(
+    "https://account-d.docusign.com/oauth/userinfo",
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    }
+  );
+
+  const account =
+    userInfoRes.data.accounts.find(a => a.is_default) ||
+    userInfoRes.data.accounts[0];
+
+  return {
+    accessToken,
+    accountId: account.account_id,
+    baseUri: account.base_uri
+  };
 }
 
+// 🚀 START ROUTE
 app.get("/", async (req, res) => {
   try {
-    const accessToken = await getAccessToken();
+    const { accessToken, accountId, baseUri } = await getDocuSignAuth();
 
+    // 👉 Test-Dokument
     const pdfBase64 = Buffer.from(`
       <html>
         <body>
@@ -52,8 +76,9 @@ app.get("/", async (req, res) => {
       </html>
     `).toString("base64");
 
+    // 📄 Envelope erstellen
     const envelopeRes = await axios.post(
-      `https://demo.docusign.net/restapi/v2.1/accounts/${ACCOUNT_ID}/envelopes`,
+      `${baseUri}/restapi/v2.1/accounts/${accountId}/envelopes`,
       {
         emailSubject: "Bitte unterschreiben",
         documents: [
@@ -95,8 +120,9 @@ app.get("/", async (req, res) => {
 
     const envelopeId = envelopeRes.data.envelopeId;
 
+    // ✍️ Signing URL holen
     const viewRes = await axios.post(
-      `https://demo.docusign.net/restapi/v2.1/accounts/${ACCOUNT_ID}/envelopes/${envelopeId}/views/recipient`,
+      `${baseUri}/restapi/v2.1/accounts/${accountId}/envelopes/${envelopeId}/views/recipient`,
       {
         returnUrl: "https://express-hello-world-43k4.onrender.com/done",
         authenticationMethod: "none",
@@ -111,16 +137,21 @@ app.get("/", async (req, res) => {
       }
     );
 
+    // 👉 Weiterleitung zu DocuSign
     res.redirect(viewRes.data.url);
+
   } catch (e) {
+    console.error("DOCUSIGN ERROR:");
     console.error(e.response?.data || e.message);
     res.send("Fehler bei DocuSign");
   }
 });
 
+// ✅ Nach Unterschrift
 app.get("/done", (req, res) => {
   res.send("Unterschrift abgeschlossen.");
 });
 
+// Render Port
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("läuft"));
